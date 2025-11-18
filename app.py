@@ -18,7 +18,7 @@ EXCLUDE_KEYWORDS = ["esporte", "cultura"]
 
 def get_news():
     fg = FeedGenerator()
-    fg.title("Prefeitura de São Paulo - Notícias filtradas")
+    fg.title("Notícias de Itaquera")
     fg.link(href="https://prefeitura.sp.gov.br/noticias")
     fg.description("Feed não-oficial com filtros fixos e múltiplas páginas.")
     fg.language("pt-br")

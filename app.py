@@ -27,9 +27,13 @@ def get_news():
         resp = requests.get(page)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        for item in soup.select("article a"):
-            link = urljoin(page, item.get("href"))
-            title = item.get_text(strip=True)
+        for item in soup.select("a"):
+    link = item.get("href")
+    title = item.get_text(strip=True)
+    if not link or not title:
+        continue
+    link = urljoin(page, link)
+
 
             # Filtros fixos
             if INCLUDE_KEYWORDS and not any(k.lower() in title.lower() for k in INCLUDE_KEYWORDS):

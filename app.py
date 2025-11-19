@@ -7,8 +7,11 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-# 🔧 Endpoint genérico: últimas notícias sem filtro de data fixa
-NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished:desc&filter=siteId eq 34276"
+# 🔧 Lista de endpoints possíveis (multi-fonte)
+NEWS_SOURCES = [
+    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished:desc&filter=siteId eq 34276",
+    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=30&sort=datePublished:desc"
+]
 
 # 🔧 Imagem padrão
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
@@ -21,19 +24,25 @@ SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"})
 TIMEOUT = 8
 
+# Cache simples em memória (10 minutos)
 CACHE = {"feed": None, "ts": 0}
 CACHE_TTL = 600
 
 
-def fetch_news_json():
-    """Busca notícias diretamente do endpoint JSON da Prefeitura."""
-    try:
-        resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
-        if resp.status_code == 200:
-            return resp.json().get("items", [])
-    except Exception:
-        return []
-    return []
+def fetch_from_sources():
+    """Busca notícias de múltiplos endpoints e junta os resultados."""
+    items = []
+    for url in NEWS_SOURCES:
+        try:
+            resp = SESSION.get(url, timeout=TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                items.extend(data.get("items", []))
+        except Exception:
+            continue
+    # ordena por data decrescente
+    items.sort(key=lambda x: x.get("datePublished", ""), reverse=True)
+    return items[:30]
 
 
 def safe_title(item):
@@ -66,7 +75,7 @@ def build_feed():
     fg.language("pt-br")
 
     entries_added = 0
-    news_items = fetch_news_json()
+    news_items = fetch_from_sources()
 
     for item in news_items:
         title = safe_title(item)
@@ -125,12 +134,19 @@ def build_feed():
 
 @app.route("/feed.xml")
 def feed():
-    """Endpoint do feed RSS com cache de 10 minutos."""
+    """Endpoint do feed RSS com cache de 10 minutos.
+       Se falhar, mantém último feed válido para não ficar em branco."""
     now = time.time()
     if CACHE["feed"] and (now - CACHE["ts"] < CACHE_TTL):
         return Response(CACHE["feed"], mimetype="application/rss+xml")
 
-    rss = build_feed()
-    CACHE["feed"] = rss
-    CACHE["ts"] = now
-    return Response(rss, mimetype="application/rss+xml")
+    try:
+        rss = build_feed()
+        CACHE["feed"] = rss
+        CACHE["ts"] = now
+        return Response(rss, mimetype="application/rss+xml")
+    except Exception:
+        # fallback: serve último feed válido mesmo em caso de erro
+        if CACHE["feed"]:
+            return Response(CACHE["feed"], mimetype="application/rss+xml")
+        return Response("Erro ao gerar feed", mimetype="text/plain")

@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished%3Adesc&filter=siteId+eq+34276"
+# Endpoint JSON das últimas notícias (ordenadas por data desc)
+NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=30&sort=datePublished:desc"
+
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
 
 INCLUDE_KEYWORDS = []
@@ -25,8 +27,7 @@ def fetch_news_json():
     try:
         resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
         if resp.status_code == 200:
-            data = resp.json()
-            return data.get("items", [])
+            return resp.json().get("items", [])
     except Exception:
         return []
     return []
@@ -55,7 +56,7 @@ def build_feed():
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
     fg.link(href="https://prefeitura.sp.gov.br/noticias")
-    fg.description("Feed confiável com filtros e múltiplas páginas.")
+    fg.description("Feed confiável com as últimas notícias da Prefeitura.")
     fg.language("pt-br")
 
     entries_added = 0
@@ -72,9 +73,9 @@ def build_feed():
             if not isinstance(field, dict):
                 continue
             name = field.get("name")
-            if name == "texto" and "contentFieldValue" in field:
+            if name.lower() in ["texto", "conteudo", "body"] and "contentFieldValue" in field:
                 content = field["contentFieldValue"].get("data", "") or content
-            if name == "imagem" and "contentFieldValue" in field:
+            if name.lower() in ["imagem", "image"] and "contentFieldValue" in field:
                 img_url = field["contentFieldValue"].get("image", {}).get("contentUrl")
 
         if not img_url:

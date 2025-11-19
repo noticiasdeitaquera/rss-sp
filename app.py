@@ -7,25 +7,20 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-# 🔧 Endpoint JSON das últimas notícias (ordenadas por data desc)
-# Esse endpoint retorna os conteúdos mais recentes do site da Prefeitura
-NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=30&sort=datePublished:desc"
+# 🔧 Endpoint genérico: últimas notícias sem filtro de data fixa
+NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished:desc&filter=siteId eq 34276"
 
-# 🔧 Imagem padrão caso a notícia não tenha imagem
+# 🔧 Imagem padrão
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
 
 # 🔧 Filtros configuráveis
-# Se INCLUDE_KEYWORDS estiver vazio → todas as notícias entram
-# Se EXCLUDE_KEYWORDS estiver vazio → nenhuma notícia é excluída
-INCLUDE_KEYWORDS = []  # exemplo: ["saúde", "educação"]
-EXCLUDE_KEYWORDS = ["esporte", "cultura"]
+INCLUDE_KEYWORDS = []  # se vazio → todas entram
+EXCLUDE_KEYWORDS = ["esporte", "cultura"]  # se vazio → nenhuma é excluída
 
-# Sessão HTTP com cabeçalho e timeout
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"})
 TIMEOUT = 8
 
-# Cache simples em memória (10 minutos)
 CACHE = {"feed": None, "ts": 0}
 CACHE_TTL = 600
 
@@ -35,8 +30,7 @@ def fetch_news_json():
     try:
         resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
         if resp.status_code == 200:
-            data = resp.json()
-            return data.get("items", [])
+            return resp.json().get("items", [])
     except Exception:
         return []
     return []
@@ -75,16 +69,14 @@ def build_feed():
     news_items = fetch_news_json()
 
     for item in news_items:
-        # título e link (obrigatórios para RSS)
         title = safe_title(item)
         link = item.get("contentUrl") or "https://prefeitura.sp.gov.br/noticias"
 
         if not title or not link:
-            continue  # pula itens inválidos
+            continue
 
         dt = safe_date(item.get("datePublished"))
 
-        # texto e imagem
         content = ""
         img_url = None
         for field in item.get("contentFields", []):
@@ -102,17 +94,14 @@ def build_feed():
         # 🔍 Aplicação dos filtros
         full_text = f"{title} {content}"
 
-        # Se INCLUDE_KEYWORDS estiver vazio → todas entram
         include_ok = True
         if INCLUDE_KEYWORDS:
             include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
 
-        # Se EXCLUDE_KEYWORDS estiver vazio → nenhuma é excluída
         exclude_ok = True
         if EXCLUDE_KEYWORDS:
             exclude_ok = not any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS)
 
-        # Só adiciona se passar nos filtros
         if include_ok and exclude_ok:
             fe = fg.add_entry()
             fe.title(title)
@@ -123,7 +112,6 @@ def build_feed():
             fe.pubDate(dt)
             entries_added += 1
 
-    # Se nada foi encontrado, adiciona item informativo
     if entries_added == 0:
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")

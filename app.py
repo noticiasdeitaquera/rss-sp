@@ -1,3 +1,4 @@
+import os
 import time
 import hashlib
 import requests
@@ -34,7 +35,7 @@ MIN_ITEMS = 10
 # 🔧 Sessão HTTP
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"})
-TIMEOUT = 10
+TIMEOUT = 12
 
 # 🔧 Cache
 CACHE = {"feed": None, "ts": 0}
@@ -169,14 +170,13 @@ def fetch_all_sources():
 
     # Filtro últimos 180 dias
     cutoff = datetime.now(timezone.utc) - timedelta(days=180)
-    items = [i for i in items if safe_date(i.get("datePublished")) >= cutoff]
+    items_recent = [i for i in items if safe_date(i.get("datePublished")) >= cutoff]
 
-    # Garante mínimo de itens
-    if len(items) < MIN_ITEMS:
-        items = list(dedup.values())
-        items.sort(key=lambda x: safe_date(x.get("datePublished")), reverse=True)
+    # Garante mínimo
+    if len(items_recent) < MIN_ITEMS:
+        items_recent = items  # relaxa cutoff mas mantém ordenação
 
-    return items[:100]
+    return items_recent[:100]
 
 
 # Feed ---------------------------------------------------------------------
@@ -248,7 +248,6 @@ def feed():
     now = time.time()
     if CACHE["feed"] and (now - CACHE["ts"] < CACHE_TTL):
         return Response(CACHE["feed"], mimetype="application/rss+xml")
-
     try:
         rss = build_feed()
         CACHE["feed"] = rss
@@ -264,4 +263,14 @@ def feed():
 
 def ping_self():
     """Função que pinga o próprio feed a cada 5 minutos para evitar hibernação."""
-    while
+    while True:
+        try:
+            port = os.environ.get("PORT", "10000")
+            SESSION.get(f"http://localhost:{port}/feed.xml", timeout=5)
+        except Exception:
+            pass
+        time.sleep(300)  # 5 minutos
+
+# Inicia thread de ping ao subir o app
+threading.Thread(target=ping_self, daemon=True).start()
+

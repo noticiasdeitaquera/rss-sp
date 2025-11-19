@@ -1,27 +1,23 @@
 import time
 import hashlib
 import requests
-from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
 from flask import Flask, Response
-from urllib.parse import urljoin
 from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-# 🔧 Página principal de notícias
-NEWS_PAGE = "https://prefeitura.sp.gov.br/noticias"
-
-# 🔧 Palavras-chave
-# INCLUDE_KEYWORDS: se vazio, todas as notícias entram
-# EXCLUDE_KEYWORDS: notícias contendo essas palavras são removidas
-INCLUDE_KEYWORDS = []  # exemplo: ["saúde", "educação"]
-EXCLUDE_KEYWORDS = ["esporte", "cultura"]
+# 🔧 Endpoint JSON das notícias
+NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished%3Adesc&filter=siteId+eq+34276"
 
 # Imagem padrão caso a notícia não tenha imagem
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
 
-# Sessão HTTP com cabeçalho e timeout
+# Palavras-chave
+INCLUDE_KEYWORDS = []  # se vazio, todas entram
+EXCLUDE_KEYWORDS = ["esporte", "cultura"]
+
+# Sessão HTTP
 SESSION = requests.Session()
 SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"
@@ -30,83 +26,75 @@ TIMEOUT = 8
 
 # Cache simples em memória (10 minutos)
 CACHE = {"feed": None, "ts": 0}
-CACHE_TTL = 600  # segundos
+CACHE_TTL = 600
 
 
-def safe_get(url):
-    """Faz GET com timeout e fallback seguro, limitando tamanho da resposta."""
+def fetch_news_json():
+    """Busca notícias diretamente do endpoint JSON."""
     try:
-        resp = SESSION.get(url, timeout=TIMEOUT, stream=False)
+        resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
         if resp.status_code == 200:
-            return resp.text[:200000]  # limita tamanho para evitar estourar memória
+            return resp.json().get("items", [])
     except Exception:
-        return ""
-    return ""
+        return []
+    return []
 
 
 def build_feed():
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
-    fg.link(href=NEWS_PAGE)
+    fg.link(href="https://prefeitura.sp.gov.br/noticias")
     fg.description("Feed confiável com filtros e múltiplas páginas.")
     fg.language("pt-br")
 
-    seen_links = set()
     entries_added = 0
+    news_items = fetch_news_json()
 
-    listing_html = safe_get(NEWS_PAGE)
-    if listing_html:
-        soup = BeautifulSoup(listing_html, "html.parser")
+    for item in news_items:
+        title = item.get("title", {}).get("pt_BR") or "Sem título"
+        link = item.get("contentUrl") or "https://prefeitura.sp.gov.br/noticias"
+        pub_date = item.get("datePublished")
+        dt = datetime.now(timezone.utc)
+        if pub_date:
+            try:
+                dt = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
+            except Exception:
+                pass
 
-        # Seleciona apenas os itens da lista de notícias
-        news_items = soup.select("ul li a")[:30]  # limite de 30 links
+        # tenta pegar texto e imagem dos contentFields
+        content = ""
+        img_url = None
+        for field in item.get("contentFields", []):
+            name = field.get("name")
+            if name == "texto" and "contentFieldValue" in field:
+                content = field["contentFieldValue"].get("data", "")
+            if name == "imagem" and "contentFieldValue" in field:
+                img_url = field["contentFieldValue"].get("image", {}).get("contentUrl")
 
-        for item in news_items:
-            link = item.get("href")
-            title_tag = item.select_one("p")
-            title = title_tag.get_text(strip=True) if title_tag else item.get_text(strip=True)
+        if not img_url:
+            img_url = DEFAULT_IMAGE
 
-            if not link or not title:
-                continue
+        # 🔍 Filtros
+        full_text = f"{title} {content}"
+        include_ok = True
+        if INCLUDE_KEYWORDS:
+            include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
+        exclude_ok = not any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS)
 
-            link = urljoin(NEWS_PAGE, link)
-            if link in seen_links:
-                continue
-            seen_links.add(link)
+        if include_ok and exclude_ok:
+            fe = fg.add_entry()
+            fe.title(title)
+            fe.link(href=link)
+            fe.description(content if content else title)
+            fe.enclosure(img_url, 0, "image/jpeg")
+            fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
+            fe.pubDate(dt)
+            entries_added += 1
 
-            # tenta pegar a data se existir
-            date_tag = item.select_one("span.psp-badge")
-            pub_date = None
-            if date_tag:
-                try:
-                    pub_date = datetime.strptime(date_tag.get_text(strip=True), "%d/%m/%Y")
-                    pub_date = pub_date.replace(tzinfo=timezone.utc)
-                except Exception:
-                    pub_date = datetime.now(timezone.utc)
-
-            # 🔍 FILTRO:
-            full_text = f"{title}"
-            include_ok = True
-            if INCLUDE_KEYWORDS:
-                include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
-
-            exclude_ok = not any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS)
-
-            if include_ok and exclude_ok:
-                fe = fg.add_entry()
-                fe.title(title)
-                fe.link(href=link)
-                fe.description(title)
-                fe.enclosure(DEFAULT_IMAGE, 0, "image/jpeg")  # usa imagem padrão
-                fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
-                fe.pubDate(pub_date if pub_date else datetime.now(timezone.utc))
-                entries_added += 1
-
-    # se nada foi encontrado, adiciona item informativo
     if entries_added == 0:
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")
-        fe.link(href=NEWS_PAGE)
+        fe.link(href="https://prefeitura.sp.gov.br/noticias")
         fe.description("Nenhum item foi encontrado com os filtros atuais.")
         fe.enclosure(DEFAULT_IMAGE, 0, "image/jpeg")
         fe.pubDate(datetime.now(timezone.utc))
@@ -116,7 +104,6 @@ def build_feed():
 
 @app.route("/feed.xml")
 def feed():
-    # cache leve em memória (10 minutos)
     now = time.time()
     if CACHE["feed"] and (now - CACHE["ts"] < CACHE_TTL):
         return Response(CACHE["feed"], mimetype="application/rss+xml")

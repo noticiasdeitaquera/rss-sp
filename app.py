@@ -7,33 +7,43 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-# Endpoint JSON das últimas notícias (ordenadas por data desc)
+# 🔧 Endpoint JSON das últimas notícias (ordenadas por data desc)
+# Esse endpoint retorna os conteúdos mais recentes do site da Prefeitura
 NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=30&sort=datePublished:desc"
 
+# 🔧 Imagem padrão caso a notícia não tenha imagem
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
 
-INCLUDE_KEYWORDS = []
+# 🔧 Filtros configuráveis
+# Se INCLUDE_KEYWORDS estiver vazio → todas as notícias entram
+# Se EXCLUDE_KEYWORDS estiver vazio → nenhuma notícia é excluída
+INCLUDE_KEYWORDS = []  # exemplo: ["saúde", "educação"]
 EXCLUDE_KEYWORDS = ["esporte", "cultura"]
 
+# Sessão HTTP com cabeçalho e timeout
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"})
 TIMEOUT = 8
 
+# Cache simples em memória (10 minutos)
 CACHE = {"feed": None, "ts": 0}
 CACHE_TTL = 600
 
 
 def fetch_news_json():
+    """Busca notícias diretamente do endpoint JSON da Prefeitura."""
     try:
         resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
         if resp.status_code == 200:
-            return resp.json().get("items", [])
+            data = resp.json()
+            return data.get("items", [])
     except Exception:
         return []
     return []
 
 
 def safe_title(item):
+    """Retorna título seguro (string ou dict)."""
     raw_title = item.get("title")
     if isinstance(raw_title, dict):
         return raw_title.get("pt_BR") or "Sem título"
@@ -43,6 +53,7 @@ def safe_title(item):
 
 
 def safe_date(pub_date):
+    """Retorna data segura (ISO ou fallback para agora)."""
     dt = datetime.now(timezone.utc)
     if pub_date:
         try:
@@ -53,6 +64,7 @@ def safe_date(pub_date):
 
 
 def build_feed():
+    """Constrói o feed RSS com as últimas notícias."""
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
     fg.link(href="https://prefeitura.sp.gov.br/noticias")
@@ -63,30 +75,44 @@ def build_feed():
     news_items = fetch_news_json()
 
     for item in news_items:
+        # título e link (obrigatórios para RSS)
         title = safe_title(item)
         link = item.get("contentUrl") or "https://prefeitura.sp.gov.br/noticias"
+
+        if not title or not link:
+            continue  # pula itens inválidos
+
         dt = safe_date(item.get("datePublished"))
 
+        # texto e imagem
         content = ""
         img_url = None
         for field in item.get("contentFields", []):
             if not isinstance(field, dict):
                 continue
-            name = field.get("name")
-            if name.lower() in ["texto", "conteudo", "body"] and "contentFieldValue" in field:
+            name = field.get("name", "").lower()
+            if name in ["texto", "conteudo", "body"] and "contentFieldValue" in field:
                 content = field["contentFieldValue"].get("data", "") or content
-            if name.lower() in ["imagem", "image"] and "contentFieldValue" in field:
+            if name in ["imagem", "image"] and "contentFieldValue" in field:
                 img_url = field["contentFieldValue"].get("image", {}).get("contentUrl")
 
         if not img_url:
             img_url = DEFAULT_IMAGE
 
+        # 🔍 Aplicação dos filtros
         full_text = f"{title} {content}"
+
+        # Se INCLUDE_KEYWORDS estiver vazio → todas entram
         include_ok = True
         if INCLUDE_KEYWORDS:
             include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
-        exclude_ok = not any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS)
 
+        # Se EXCLUDE_KEYWORDS estiver vazio → nenhuma é excluída
+        exclude_ok = True
+        if EXCLUDE_KEYWORDS:
+            exclude_ok = not any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS)
+
+        # Só adiciona se passar nos filtros
         if include_ok and exclude_ok:
             fe = fg.add_entry()
             fe.title(title)
@@ -97,6 +123,7 @@ def build_feed():
             fe.pubDate(dt)
             entries_added += 1
 
+    # Se nada foi encontrado, adiciona item informativo
     if entries_added == 0:
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")
@@ -110,6 +137,7 @@ def build_feed():
 
 @app.route("/feed.xml")
 def feed():
+    """Endpoint do feed RSS com cache de 10 minutos."""
     now = time.time()
     if CACHE["feed"] and (now - CACHE["ts"] < CACHE_TTL):
         return Response(CACHE["feed"], mimetype="application/rss+xml")

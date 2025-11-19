@@ -7,11 +7,9 @@ from datetime import datetime, timezone, timedelta
 
 app = Flask(__name__)
 
-# 🔧 Lista de endpoints possíveis (multi-fonte)
-NEWS_SOURCES = [
-    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=100&sort=datePublished:desc&filter=siteId eq 34276",
-    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=100&sort=datePublished:desc"
-]
+# 🔧 Lista de IDs de estruturas de conteúdo (multi-seção)
+# Você pode adicionar mais IDs conforme descobrir no DevTools
+STRUCTURE_IDS = [79914, 81234, 82000]
 
 # 🔧 Imagem padrão
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
@@ -29,10 +27,11 @@ CACHE = {"feed": None, "ts": 0}
 CACHE_TTL = 600
 
 
-def fetch_from_sources():
-    """Busca notícias de múltiplos endpoints e junta os resultados."""
+def fetch_from_structures():
+    """Busca notícias de múltiplos IDs de estruturas e junta os resultados."""
     items = []
-    for url in NEWS_SOURCES:
+    for sid in STRUCTURE_IDS:
+        url = f"https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/{sid}/structured-contents?pageSize=100&sort=datePublished:desc&filter=siteId eq 34276"
         try:
             resp = SESSION.get(url, timeout=TIMEOUT)
             if resp.status_code == 200:
@@ -81,7 +80,7 @@ def build_feed():
     fg.language("pt-br")
 
     entries_added = 0
-    news_items = fetch_from_sources()
+    news_items = fetch_from_structures()
 
     for item in news_items:
         title = safe_title(item)

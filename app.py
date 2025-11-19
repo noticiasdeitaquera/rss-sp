@@ -44,38 +44,6 @@ def safe_get(url):
     return ""
 
 
-def extract_content_and_image(article_html, article_url):
-    """Extrai texto e imagem de uma página de notícia."""
-    soup = BeautifulSoup(article_html, "html.parser")
-
-    # pega o máximo de texto possível
-    content_blocks = soup.select("article p, .content p, div.texto p, p")
-    content = " ".join([p.get_text(strip=True) for p in content_blocks])
-
-    # tenta pegar imagem principal em vários formatos
-    img_candidates = [
-        soup.find("meta", property="og:image"),
-        soup.find("meta", attrs={"name": "twitter:image"}),
-        soup.select_one("article img"),
-        soup.select_one(".content img"),
-        soup.select_one("img"),
-    ]
-    img_url = None
-    for candidate in img_candidates:
-        if not candidate:
-            continue
-        src = candidate.get("content") or candidate.get("src")
-        if src:
-            img_url = urljoin(article_url, src)
-            break
-
-    # se não encontrou imagem, usa a imagem padrão
-    if not img_url:
-        img_url = DEFAULT_IMAGE
-
-    return content, img_url
-
-
 def build_feed():
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
@@ -86,15 +54,14 @@ def build_feed():
     seen_links = set()
     entries_added = 0
 
-    # 🔹 Parte única: Notícias principais
     listing_html = safe_get(NEWS_PAGE)
     if listing_html:
         soup = BeautifulSoup(listing_html, "html.parser")
 
-        # Seleciona apenas links da lista de notícias
-        news_links = soup.select("ul li a")[:30]  # limite de 30 links
+        # Seleciona apenas os itens da lista de notícias
+        news_items = soup.select("ul li a")[:30]  # limite de 30 links
 
-        for item in news_links:
+        for item in news_items:
             link = item.get("href")
             title_tag = item.select_one("p")
             title = title_tag.get_text(strip=True) if title_tag else item.get_text(strip=True)
@@ -107,16 +74,18 @@ def build_feed():
                 continue
             seen_links.add(link)
 
-            # tenta pegar conteúdo da notícia
-            article_html = safe_get(link)
-            if not article_html:
-                continue
-
-            content, img_url = extract_content_and_image(article_html, link)
-
-            full_text = f"{title} {content}"
+            # tenta pegar a data se existir
+            date_tag = item.select_one("span.psp-badge")
+            pub_date = None
+            if date_tag:
+                try:
+                    pub_date = datetime.strptime(date_tag.get_text(strip=True), "%d/%m/%Y")
+                    pub_date = pub_date.replace(tzinfo=timezone.utc)
+                except Exception:
+                    pub_date = datetime.now(timezone.utc)
 
             # 🔍 FILTRO:
+            full_text = f"{title}"
             include_ok = True
             if INCLUDE_KEYWORDS:
                 include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
@@ -127,10 +96,10 @@ def build_feed():
                 fe = fg.add_entry()
                 fe.title(title)
                 fe.link(href=link)
-                fe.description(content if content else "Sem conteúdo disponível")
-                fe.enclosure(img_url, 0, "image/jpeg")
+                fe.description(title)
+                fe.enclosure(DEFAULT_IMAGE, 0, "image/jpeg")  # usa imagem padrão
                 fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
-                fe.pubDate(datetime.now(timezone.utc))
+                fe.pubDate(pub_date if pub_date else datetime.now(timezone.utc))
                 entries_added += 1
 
     # se nada foi encontrado, adiciona item informativo

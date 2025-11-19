@@ -3,7 +3,8 @@ from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
 from flask import Flask, Response
 from urllib.parse import urljoin
-from datetime import datetime
+from datetime import datetime, timezone
+
 
 app = Flask(__name__)
 
@@ -68,7 +69,7 @@ def get_news():
             fe.description(content)
             if img_url:
                 fe.enclosure(img_url, 0, "image/jpeg")
-            fe.pubDate(datetime.utcnow())
+            fe.pubDate(datetime.now(timezone.utc))
 
     return fg.rss_str(pretty=True)
 

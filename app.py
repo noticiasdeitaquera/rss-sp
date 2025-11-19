@@ -12,7 +12,7 @@ app = Flask(__name__)
 # 🔧 Páginas que serão raspadas
 PAGES_TO_SCRAPE = [
     "https://prefeitura.sp.gov.br/noticias",
-    # Adicione outras páginas aqui se quiser
+    "https://prefeitura.sp.gov.br/agenda-do-prefeito",
 ]
 
 # 🔧 Palavras-chave
@@ -44,6 +44,34 @@ def safe_get(url):
     return ""
 
 
+def extract_content_and_image(article_html, article_url):
+    """Extrai texto e imagem de uma página de notícia."""
+    soup = BeautifulSoup(article_html, "html.parser")
+
+    # pega o máximo de texto possível
+    content_blocks = soup.select("article p, .content p, div.texto p, p")
+    content = " ".join([p.get_text(strip=True) for p in content_blocks])
+
+    # tenta pegar imagem principal em vários formatos
+    img_candidates = [
+        soup.find("meta", property="og:image"),
+        soup.find("meta", attrs={"name": "twitter:image"}),
+        soup.select_one("article img"),
+        soup.select_one(".content img"),
+        soup.select_one("img"),
+    ]
+    img_url = None
+    for candidate in img_candidates:
+        if not candidate:
+            continue
+        src = candidate.get("content") or candidate.get("src")
+        if src:
+            img_url = urljoin(article_url, src)
+            break
+
+    return content, img_url
+
+
 def build_feed():
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
@@ -61,10 +89,13 @@ def build_feed():
 
         soup = BeautifulSoup(listing_html, "html.parser")
 
-        # pega até 15 links por página para desempenho equilibrado
-        for item in soup.select("a")[:15]:
+        # Seleciona links de notícias em diferentes blocos
+        news_links = soup.select("ul li a, article a, .noticia a, .listagem a")
+
+        for item in news_links[:30]:  # limite para não sobrecarregar
             link = item.get("href")
-            title = item.get_text(strip=True)
+            title_tag = item.select_one("p")
+            title = title_tag.get_text(strip=True) if title_tag else item.get_text(strip=True)
 
             if not link or not title:
                 continue
@@ -79,12 +110,7 @@ def build_feed():
             if not article_html:
                 continue
 
-            news_soup = BeautifulSoup(article_html, "html.parser")
-            # pega o máximo de texto possível
-            content = " ".join([p.get_text(strip=True) for p in news_soup.select("p")])
-            # tenta pegar imagem principal
-            img_tag = news_soup.select_one("img")
-            img_url = urljoin(link, img_tag["src"]) if img_tag and img_tag.get("src") else None
+            content, img_url = extract_content_and_image(article_html, link)
 
             full_text = f"{title} {content}"
 

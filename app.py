@@ -3,14 +3,14 @@ import hashlib
 import requests
 from feedgen.feed import FeedGenerator
 from flask import Flask, Response
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 app = Flask(__name__)
 
 # 🔧 Lista de endpoints possíveis (multi-fonte)
 NEWS_SOURCES = [
-    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished:desc&filter=siteId eq 34276",
-    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=30&sort=datePublished:desc"
+    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=100&sort=datePublished:desc&filter=siteId eq 34276",
+    "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/sites/34276/structured-contents?pageSize=100&sort=datePublished:desc"
 ]
 
 # 🔧 Imagem padrão
@@ -40,9 +40,15 @@ def fetch_from_sources():
                 items.extend(data.get("items", []))
         except Exception:
             continue
-    # ordena por data decrescente
+
+    # 🔧 Ordena por data decrescente
     items.sort(key=lambda x: x.get("datePublished", ""), reverse=True)
-    return items[:30]
+
+    # 🔧 Filtra apenas últimos 12 meses (ajustável)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=365)
+    items = [i for i in items if safe_date(i.get("datePublished")) >= cutoff]
+
+    return items[:30]  # pega só os 30 mais recentes
 
 
 def safe_title(item):

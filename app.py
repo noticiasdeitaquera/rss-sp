@@ -100,7 +100,7 @@ def build_feed():
             fe.pubDate(datetime.now(timezone.utc))
 
     # se nada for encontrado, adiciona item informativo
-    if not fg._feed.get("entry"):
+    if not fg.entry():
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")
         fe.link(href=PAGES_TO_SCRAPE[0])

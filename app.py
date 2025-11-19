@@ -16,6 +16,7 @@ PAGES_TO_SCRAPE = [
 ]
 
 # 🔧 Palavras-chave
+# Se INCLUDE_KEYWORDS estiver vazio, todas as notícias serão incluídas
 INCLUDE_KEYWORDS = ["saúde", "educação", "deficiência"]
 EXCLUDE_KEYWORDS = ["esporte", "cultura"]
 
@@ -50,6 +51,8 @@ def build_feed():
     fg.language("pt-br")
 
     seen_links = set()
+    entries_added = 0
+    fallback_items = []  # guarda notícias sem filtro para fallback
 
     for page in PAGES_TO_SCRAPE:
         listing_html = safe_get(page)
@@ -58,8 +61,8 @@ def build_feed():
 
         soup = BeautifulSoup(listing_html, "html.parser")
 
-        # pega até 10 links por página para desempenho
-        for item in soup.select("a")[:10]:
+        # pega até 15 links por página para mais conteúdo
+        for item in soup.select("a")[:15]:
             link = item.get("href")
             title = item.get_text(strip=True)
 
@@ -83,13 +86,30 @@ def build_feed():
 
             full_text = f"{title} {content}"
 
-            # filtros
-            if INCLUDE_KEYWORDS and not any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS):
-                continue
-            if EXCLUDE_KEYWORDS and any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS):
-                continue
+            # guarda para fallback
+            fallback_items.append((title, link, content, img_url))
 
-            # adiciona notícia ao feed
+            # filtros
+            include_ok = True
+            if INCLUDE_KEYWORDS:
+                include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
+
+            exclude_ok = not any(k.lower() in full_text.lower() for k in EXCLUDE_KEYWORDS)
+
+            if include_ok and exclude_ok:
+                fe = fg.add_entry()
+                fe.title(title)
+                fe.link(href=link)
+                fe.description(content if content else "Sem conteúdo disponível")
+                if img_url:
+                    fe.enclosure(img_url, 0, "image/jpeg")
+                fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
+                fe.pubDate(datetime.now(timezone.utc))
+                entries_added += 1
+
+    # se nada passou nos filtros, publica todas as notícias encontradas
+    if entries_added == 0 and fallback_items:
+        for title, link, content, img_url in fallback_items:
             fe = fg.add_entry()
             fe.title(title)
             fe.link(href=link)
@@ -99,12 +119,12 @@ def build_feed():
             fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
             fe.pubDate(datetime.now(timezone.utc))
 
-    # se nada for encontrado, adiciona item informativo
+    # se nada foi encontrado mesmo, adiciona item informativo
     if not fg.entry():
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")
         fe.link(href=PAGES_TO_SCRAPE[0])
-        fe.description("Nenhum item foi encontrado com os filtros atuais.")
+        fe.description("Nenhum item foi encontrado.")
         fe.pubDate(datetime.now(timezone.utc))
 
     return fg.rss_str(pretty=True)

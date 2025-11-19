@@ -10,16 +10,16 @@ from datetime import datetime, timezone
 app = Flask(__name__)
 
 # 🔧 Páginas que serão raspadas
-PAGES_TO_SCRAPE = [
-    "https://prefeitura.sp.gov.br/noticias",
-    "https://prefeitura.sp.gov.br/agenda-do-prefeito",
-]
+NEWS_PAGE = "https://prefeitura.sp.gov.br/noticias"
 
 # 🔧 Palavras-chave
 # INCLUDE_KEYWORDS: se vazio, todas as notícias entram
 # EXCLUDE_KEYWORDS: notícias contendo essas palavras são removidas
 INCLUDE_KEYWORDS = []  # exemplo: ["saúde", "educação"]
 EXCLUDE_KEYWORDS = ["esporte", "cultura"]
+
+# Imagem padrão caso a notícia não tenha imagem
+DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
 
 # Sessão HTTP com cabeçalho e timeout
 SESSION = requests.Session()
@@ -34,11 +34,11 @@ CACHE_TTL = 600  # segundos
 
 
 def safe_get(url):
-    """Faz GET com timeout e fallback seguro."""
+    """Faz GET com timeout e fallback seguro, limitando tamanho da resposta."""
     try:
-        resp = SESSION.get(url, timeout=TIMEOUT)
+        resp = SESSION.get(url, timeout=TIMEOUT, stream=False)
         if resp.status_code == 200:
-            return resp.text
+            return resp.text[:200000]  # limita tamanho para evitar estourar memória
     except Exception:
         return ""
     return ""
@@ -69,30 +69,32 @@ def extract_content_and_image(article_html, article_url):
             img_url = urljoin(article_url, src)
             break
 
+    # se não encontrou imagem, usa a imagem padrão
+    if not img_url:
+        img_url = DEFAULT_IMAGE
+
     return content, img_url
 
 
 def build_feed():
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
-    fg.link(href=PAGES_TO_SCRAPE[0])
+    fg.link(href=NEWS_PAGE)
     fg.description("Feed confiável com filtros e múltiplas páginas.")
     fg.language("pt-br")
 
     seen_links = set()
     entries_added = 0
 
-    for page in PAGES_TO_SCRAPE:
-        listing_html = safe_get(page)
-        if not listing_html:
-            continue
-
+    # 🔹 Parte 1: Notícias principais
+    listing_html = safe_get(NEWS_PAGE)
+    if listing_html:
         soup = BeautifulSoup(listing_html, "html.parser")
 
-        # Seleciona links de notícias em diferentes blocos
-        news_links = soup.select("ul li a, article a, .noticia a, .listagem a")
+        # Seleciona apenas links da lista de notícias
+        news_links = soup.select("ul li a")[:30]  # limite de 30 links
 
-        for item in news_links[:30]:  # limite para não sobrecarregar
+        for item in news_links:
             link = item.get("href")
             title_tag = item.select_one("p")
             title = title_tag.get_text(strip=True) if title_tag else item.get_text(strip=True)
@@ -100,7 +102,7 @@ def build_feed():
             if not link or not title:
                 continue
 
-            link = urljoin(page, link)
+            link = urljoin(NEWS_PAGE, link)
             if link in seen_links:
                 continue
             seen_links.add(link)
@@ -115,9 +117,6 @@ def build_feed():
             full_text = f"{title} {content}"
 
             # 🔍 FILTRO:
-            # - Se INCLUDE_KEYWORDS estiver vazio → todas as notícias entram
-            # - Se houver palavras em INCLUDE_KEYWORDS → só entram notícias que contenham pelo menos uma delas
-            # - Notícias com palavras em EXCLUDE_KEYWORDS são removidas
             include_ok = True
             if INCLUDE_KEYWORDS:
                 include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
@@ -129,18 +128,18 @@ def build_feed():
                 fe.title(title)
                 fe.link(href=link)
                 fe.description(content if content else "Sem conteúdo disponível")
-                if img_url:
-                    fe.enclosure(img_url, 0, "image/jpeg")
+                fe.enclosure(img_url, 0, "image/jpeg")
                 fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
-                fe.pubDate(datetime.now(timezone.utc))  # data/hora correta em UTC
+                fe.pubDate(datetime.now(timezone.utc))
                 entries_added += 1
 
     # se nada foi encontrado, adiciona item informativo
     if entries_added == 0:
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")
-        fe.link(href=PAGES_TO_SCRAPE[0])
+        fe.link(href=NEWS_PAGE)
         fe.description("Nenhum item foi encontrado com os filtros atuais.")
+        fe.enclosure(DEFAULT_IMAGE, 0, "image/jpeg")
         fe.pubDate(datetime.now(timezone.utc))
 
     return fg.rss_str(pretty=True)

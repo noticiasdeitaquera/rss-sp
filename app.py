@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-# 🔧 Páginas que serão raspadas
+# 🔧 Página principal de notícias
 NEWS_PAGE = "https://prefeitura.sp.gov.br/noticias"
 
 # 🔧 Palavras-chave
@@ -86,7 +86,7 @@ def build_feed():
     seen_links = set()
     entries_added = 0
 
-    # 🔹 Parte 1: Notícias principais
+    # 🔹 Parte única: Notícias principais
     listing_html = safe_get(NEWS_PAGE)
     if listing_html:
         soup = BeautifulSoup(listing_html, "html.parser")

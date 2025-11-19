@@ -7,30 +7,21 @@ from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-# 🔧 Endpoint JSON das notícias
 NEWS_JSON = "https://prefeitura.sp.gov.br/o/headless-delivery/v1.0/content-structures/79914/structured-contents?pageSize=30&sort=datePublished%3Adesc&filter=siteId+eq+34276"
-
-# Imagem padrão caso a notícia não tenha imagem
 DEFAULT_IMAGE = "https://www.noticiasdeitaquera.com.br/imagens/logoprefsp.png"
 
-# Palavras-chave
-INCLUDE_KEYWORDS = []  # se vazio, todas entram
+INCLUDE_KEYWORDS = []
 EXCLUDE_KEYWORDS = ["esporte", "cultura"]
 
-# Sessão HTTP
 SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"
-})
+SESSION.headers.update({"User-Agent": "Mozilla/5.0 (RSS Generator; +https://rss-sp.onrender.com)"})
 TIMEOUT = 8
 
-# Cache simples em memória (10 minutos)
 CACHE = {"feed": None, "ts": 0}
 CACHE_TTL = 600
 
 
 def fetch_news_json():
-    """Busca notícias diretamente do endpoint JSON."""
     try:
         resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
         if resp.status_code == 200:
@@ -41,14 +32,23 @@ def fetch_news_json():
     return []
 
 
-def safe_get_field(obj, key, default=""):
-    """Retorna um campo do JSON, tratando string/dict/ausência."""
-    val = obj.get(key) if isinstance(obj, dict) else None
-    if isinstance(val, dict):
-        return val.get("pt_BR", default)
-    if isinstance(val, str):
-        return val
-    return default
+def safe_title(item):
+    raw_title = item.get("title")
+    if isinstance(raw_title, dict):
+        return raw_title.get("pt_BR") or "Sem título"
+    if isinstance(raw_title, str):
+        return raw_title
+    return "Sem título"
+
+
+def safe_date(pub_date):
+    dt = datetime.now(timezone.utc)
+    if pub_date:
+        try:
+            dt = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
+        except Exception:
+            pass
+    return dt
 
 
 def build_feed():
@@ -62,22 +62,10 @@ def build_feed():
     news_items = fetch_news_json()
 
     for item in news_items:
-        # título
-        title = safe_get_field(item, "title", "Sem título")
-
-        # link
+        title = safe_title(item)
         link = item.get("contentUrl") or "https://prefeitura.sp.gov.br/noticias"
+        dt = safe_date(item.get("datePublished"))
 
-        # data
-        pub_date = item.get("datePublished")
-        dt = datetime.now(timezone.utc)
-        if pub_date:
-            try:
-                dt = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
-            except Exception:
-                pass
-
-        # texto e imagem
         content = ""
         img_url = None
         for field in item.get("contentFields", []):
@@ -92,7 +80,6 @@ def build_feed():
         if not img_url:
             img_url = DEFAULT_IMAGE
 
-        # 🔍 Filtros
         full_text = f"{title} {content}"
         include_ok = True
         if INCLUDE_KEYWORDS:

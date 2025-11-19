@@ -34,10 +34,21 @@ def fetch_news_json():
     try:
         resp = SESSION.get(NEWS_JSON, timeout=TIMEOUT)
         if resp.status_code == 200:
-            return resp.json().get("items", [])
+            data = resp.json()
+            return data.get("items", [])
     except Exception:
         return []
     return []
+
+
+def safe_get_field(obj, key, default=""):
+    """Retorna um campo do JSON, tratando string/dict/ausência."""
+    val = obj.get(key) if isinstance(obj, dict) else None
+    if isinstance(val, dict):
+        return val.get("pt_BR", default)
+    if isinstance(val, str):
+        return val
+    return default
 
 
 def build_feed():
@@ -51,8 +62,13 @@ def build_feed():
     news_items = fetch_news_json()
 
     for item in news_items:
-        title = item.get("title", {}).get("pt_BR") or "Sem título"
+        # título
+        title = safe_get_field(item, "title", "Sem título")
+
+        # link
         link = item.get("contentUrl") or "https://prefeitura.sp.gov.br/noticias"
+
+        # data
         pub_date = item.get("datePublished")
         dt = datetime.now(timezone.utc)
         if pub_date:
@@ -61,13 +77,15 @@ def build_feed():
             except Exception:
                 pass
 
-        # tenta pegar texto e imagem dos contentFields
+        # texto e imagem
         content = ""
         img_url = None
         for field in item.get("contentFields", []):
+            if not isinstance(field, dict):
+                continue
             name = field.get("name")
             if name == "texto" and "contentFieldValue" in field:
-                content = field["contentFieldValue"].get("data", "")
+                content = field["contentFieldValue"].get("data", "") or content
             if name == "imagem" and "contentFieldValue" in field:
                 img_url = field["contentFieldValue"].get("image", {}).get("contentUrl")
 

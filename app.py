@@ -16,8 +16,9 @@ PAGES_TO_SCRAPE = [
 ]
 
 # 🔧 Palavras-chave
-# Se INCLUDE_KEYWORDS estiver vazio, todas as notícias serão incluídas
-INCLUDE_KEYWORDS = ["saúde", "educação", "deficiência"]
+# INCLUDE_KEYWORDS: se vazio, todas as notícias entram
+# EXCLUDE_KEYWORDS: notícias contendo essas palavras são removidas
+INCLUDE_KEYWORDS = []  # exemplo: ["saúde", "educação"]
 EXCLUDE_KEYWORDS = ["esporte", "cultura"]
 
 # Sessão HTTP com cabeçalho e timeout
@@ -47,12 +48,11 @@ def build_feed():
     fg = FeedGenerator()
     fg.title("Notícias de Itaquera")
     fg.link(href=PAGES_TO_SCRAPE[0])
-    fg.description("Feed confiável com filtros fixos e múltiplas páginas.")
+    fg.description("Feed confiável com filtros e múltiplas páginas.")
     fg.language("pt-br")
 
     seen_links = set()
     entries_added = 0
-    fallback_items = []  # guarda notícias sem filtro para fallback
 
     for page in PAGES_TO_SCRAPE:
         listing_html = safe_get(page)
@@ -61,7 +61,7 @@ def build_feed():
 
         soup = BeautifulSoup(listing_html, "html.parser")
 
-        # pega até 15 links por página para mais conteúdo
+        # pega até 15 links por página para desempenho equilibrado
         for item in soup.select("a")[:15]:
             link = item.get("href")
             title = item.get_text(strip=True)
@@ -80,16 +80,18 @@ def build_feed():
                 continue
 
             news_soup = BeautifulSoup(article_html, "html.parser")
+            # pega o máximo de texto possível
             content = " ".join([p.get_text(strip=True) for p in news_soup.select("p")])
+            # tenta pegar imagem principal
             img_tag = news_soup.select_one("img")
             img_url = urljoin(link, img_tag["src"]) if img_tag and img_tag.get("src") else None
 
             full_text = f"{title} {content}"
 
-            # guarda para fallback
-            fallback_items.append((title, link, content, img_url))
-
-            # filtros
+            # 🔍 FILTRO:
+            # - Se INCLUDE_KEYWORDS estiver vazio → todas as notícias entram
+            # - Se houver palavras em INCLUDE_KEYWORDS → só entram notícias que contenham pelo menos uma delas
+            # - Notícias com palavras em EXCLUDE_KEYWORDS são removidas
             include_ok = True
             if INCLUDE_KEYWORDS:
                 include_ok = any(k.lower() in full_text.lower() for k in INCLUDE_KEYWORDS)
@@ -104,27 +106,15 @@ def build_feed():
                 if img_url:
                     fe.enclosure(img_url, 0, "image/jpeg")
                 fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
-                fe.pubDate(datetime.now(timezone.utc))
+                fe.pubDate(datetime.now(timezone.utc))  # data/hora correta em UTC
                 entries_added += 1
 
-    # se nada passou nos filtros, publica todas as notícias encontradas
-    if entries_added == 0 and fallback_items:
-        for title, link, content, img_url in fallback_items:
-            fe = fg.add_entry()
-            fe.title(title)
-            fe.link(href=link)
-            fe.description(content if content else "Sem conteúdo disponível")
-            if img_url:
-                fe.enclosure(img_url, 0, "image/jpeg")
-            fe.guid(hashlib.sha256(link.encode()).hexdigest(), permalink=False)
-            fe.pubDate(datetime.now(timezone.utc))
-
-    # se nada foi encontrado mesmo, adiciona item informativo
-    if not fg.entry():
+    # se nada foi encontrado, adiciona item informativo
+    if entries_added == 0:
         fe = fg.add_entry()
         fe.title("Sem notícias no momento")
         fe.link(href=PAGES_TO_SCRAPE[0])
-        fe.description("Nenhum item foi encontrado.")
+        fe.description("Nenhum item foi encontrado com os filtros atuais.")
         fe.pubDate(datetime.now(timezone.utc))
 
     return fg.rss_str(pretty=True)

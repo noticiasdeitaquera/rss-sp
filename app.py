@@ -239,11 +239,10 @@ def build_feed():
     return fg.rss_str(pretty=True)
 
 
+# Endpoints ----------------------------------------------------------------
+
 @app.route("/")
 def index():
     return Response("Service running", mimetype="text/plain")
 
 
-@app.route("/feed.xml")
-def feed():
-    now = time.time()

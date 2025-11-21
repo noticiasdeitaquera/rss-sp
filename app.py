@@ -362,21 +362,4 @@ def feed():
         if CACHE["feed"]:
             return Response(CACHE["feed"], mimetype="application/rss+xml")
         return Response("Erro ao gerar feed", mimetype="text/plain")
-
-
-# Auto-ping para evitar hibernação ----------------------------------------
-
-def ping_self():
-    while True:
-        try:
-            port = os.environ.get("PORT", "10000")
-            SESSION.get(f"http://localhost:{port}/feed.xml", timeout=5)
-        except Exception:
-            pass
-        time.sleep(300)  # 5 minutos
-
-threading.Thread(target=ping_self, daemon=True).start()
-
-@app.route("/health")
-def health():
-    return Response("OK", mimetype="text/plain")
+        
